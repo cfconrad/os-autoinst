@@ -120,8 +120,9 @@ sub init {
     }
     elsif (get_var('OFW') || check_var('BACKEND', 's390x')) {
         $serialdev = "hvc0";
-    }
-    else {
+    } elsif (check_var('BACKEND', 'ssh')) {
+        $serialdev = "ssh_fake_serial";
+    } else {
         $serialdev = 'ttyS0';
     }
     $serialdev = 'ttyS1' if check_var('BACKEND', 'ipmi');
