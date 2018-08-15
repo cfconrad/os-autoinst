@@ -23,9 +23,10 @@ use Carp 'croak';
 our $VERSION;
 
 sub new {
-    my ($class, $socket_fd) = @_;
+    my ($class, $socket_fd, $ssh_chan) = @_;
     my $self = bless {class => $class}, $class;
     $self->{socket_fd}    = $socket_fd;
+    $self->{ssh_chan}     = $ssh_chan;
     $self->{carry_buffer} = '';
     return $self;
 }
@@ -232,7 +233,12 @@ sub read_until {
             croak "Failed to select socket for reading: $ERRNO";
         }
 
-        my $read = sysread($fd, $buf, $buflen / 2);
+        my $read;
+        if (exists $self->{ssh_chan}) {
+            $read = $self->{ssh_chan}->read($buf, $buflen / 2);
+        } else {
+            $read = sysread($fd, $buf, $buflen / 2);
+        }
         unless (defined $read) {
             if ($ERRNO{EAGAIN} || $ERRNO{EWOULDBLOCK}) {
                 next READ;
@@ -251,6 +257,7 @@ sub read_until {
             }
             $rbuf = substr $rbuf, $remove_len;
         }
+        print("DEBUG read:$read  buf:'$buf'");
         $rbuf .= $buf;
     }
 
