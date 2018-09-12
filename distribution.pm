@@ -213,6 +213,7 @@ sub script_output {
         testapi::type_string($cat . "\n");
         testapi::wait_serial("$cat", undef, 0, no_regex => 1);
         testapi::type_string($script);
+        testapi::wait_serial($script, undef, 0, no_regex => 1);
         testapi::type_string("\n", terminate_with => 'EOT');
         testapi::wait_serial("$marker-0-");
     }
