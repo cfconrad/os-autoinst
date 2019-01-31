@@ -1801,9 +1801,9 @@ file is then parsed as the format supplied, that can be understood by OpenQA::Pa
 =cut
 
 sub parse_extra_log {
-    my ($format, $file) = @_;
+    my ($format, $file, %opts) = @_;
 
-    $file = upload_logs($file);
+    $file = upload_logs($file) unless ($opts{skip_upload});
     my @tests;
 
     {
