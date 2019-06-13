@@ -24,7 +24,7 @@ set_var(VIRSH_PASSWORD  => 'password');
 my $distri = $testapi::distri = distribution->new();
 my $svirt  = backend::svirt->new();
 
-is_deeply($svirt->read_credentials_from_virsh_variables, {
+is_deeply({$svirt->get_ssh_credentials()}, {
         hostname => 'bar',
         username => 'root',
         password => 'password',

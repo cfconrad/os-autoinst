@@ -64,6 +64,7 @@ sub new {
     $self->{min_image_similarity} = 10000;
     $self->{min_video_similarity} = 10000;
     $self->{children}             = [];
+    $self->{ssh_connections}      = {};
 
     return $self;
 }
@@ -344,6 +345,7 @@ sub stop_vm {
         $self->{encoder_pipe} = undef;
         $self->{started}      = 0;
     }
+    $self->close_ssh_connections();
     $self->close_pipes();    # does not return
     return;
 }
@@ -1166,10 +1168,22 @@ sub retry_assert_screen {
     return;
 }
 
-# shared between svirt and s390 backend
 sub new_ssh_connection {
     my ($self, %args) = @_;
+    bmwqemu::log_call(%args);
+    my %credentials = $self->get_ssh_credentials;
+    $args{$_} //= $credentials{$_} foreach (keys(%credentials));
     $args{username} ||= 'root';
+    $args{keep_open} //= 0;
+    my $connection_key;
+
+    # e.g. using hyperv_intermediate host which is running Windows need to keep the connection.
+    # Otherwise a mount point doesn't exists within the next command.
+    if ($args{keep_open}) {
+        $connection_key = join(',', map { $_ . "=" . $args{$_} } qw(hostname username password));
+        my $con = $self->{ssh_connections}->{$connection_key};
+        return $con if (defined($con));
+    }
 
     my $ssh = Net::SSH2->new;
 
@@ -1185,7 +1199,7 @@ sub new_ssh_connection {
                 # this relies on agent to be set up correctly
                 $ssh->auth_agent($args{username});
             }
-            bmwqemu::diag "Connection to $args{username}\@$args{hostname} established" if $ssh->auth_ok;
+            bmwqemu::diag "SSH connection to $args{username}\@$args{hostname} established" if $ssh->auth_ok;
             last;
         }
         else {
@@ -1197,13 +1211,21 @@ sub new_ssh_connection {
     }
     OpenQA::Exception::SSHConnectionError->throw(error => "Error connecting to <$args{username}\@$args{hostname}>: $@") unless $ssh->auth_ok;
 
+    $self->{ssh_connections}->{$connection_key} = $ssh if ($args{keep_open});
     return $ssh;
+}
+
+=head2 get_ssh_credentials
+Should return a hash with the keys: C<host, username, password>
+=cut
+sub get_ssh_credentials {
+    return;
 }
 
 # open another ssh connection to grab the serial console
 sub start_ssh_serial {
     my ($self, %args) = @_;
-
+    bmwqemu::log_call(%args);
     $self->stop_ssh_serial;
 
     my $ssh  = $self->{serial}      = $self->new_ssh_connection(%args);
@@ -1212,7 +1234,7 @@ sub start_ssh_serial {
         $ssh->die_with_error("Unable to establish SSH channel for serial console");
     }
     $chan->blocking(0);
-    $chan->pty(1);
+    $chan->pty(1);    # TODO does this work?! Doc say it should be a terminal name.
     $self->{select}->add($self->{serial}->sock);
     return ($ssh, $chan);
 }
@@ -1232,6 +1254,61 @@ sub check_ssh_serial {
         return 1;
     }
     return;
+}
+
+=head2 run_ssh_cmd
+
+   $ret = run_ssh_cmd($cmd [, username => ?][, password => ?][,host => ?]);
+   ($ret, $stdout, $stderr) = run_ssh_cmd($cmd [, username => ?][, password => ?][,host => ?], wantarray => 1);
+
+=cut
+sub run_ssh_cmd {
+    my ($self, $cmd, %args) = @_;
+    my ($stdout, $stderr) = ('', '');
+    $args{wantarray} //= 0;
+    $args{keep_open} //= 1;
+
+    bmwqemu::log_call(cmd => $cmd, %args);
+    my ($ssh, $chan) = $self->run_ssh($cmd, %args);
+    $chan->send_eof;
+
+    if ($args{wantarray}) {
+        while (!$chan->eof) {
+            if (my ($o, $e) = $chan->read2) {
+                $stdout .= $o;
+                $stderr .= $e;
+            }
+        }
+    }
+
+    bmwqemu::diag("[run_ssh_cmd($cmd)] stdout:$/$stdout") if length($stdout);
+    bmwqemu::diag("[run_ssh_cmd($cmd)] stderr:$/$stderr") if length($stderr);
+    my $ret = $chan->exit_status();
+    bmwqemu::diag("[run_ssh_cmd($cmd)] exit-code: $ret");
+    $ssh->disconnect() unless ($args{keep_open});
+
+    return $args{wantarray} ? ($ret, $stdout, $stderr) : $ret;
+}
+
+sub run_ssh {
+    my ($self, $cmd, %args) = @_;
+    bmwqemu::log_call(cmd => $cmd, %args);
+    $args{blocking} //= 1;
+    my $ssh  = $self->new_ssh_connection(%args);
+    my $chan = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for executing \"$cmd\"");
+    $chan->exec($cmd) || $ssh->die_with_error("Unable to execute \"$cmd\"");
+    $ssh->blocking($args{blocking});
+    return ($ssh, $chan);
+}
+
+sub close_ssh_connections {
+    my ($self);
+    my $cons = $self->{ssh_connections} // {};
+    for my $key (keys(%{$cons})) {
+        bmwqemu::diag("SSH disconnect $key");
+        $cons->{$key}->disconnect();
+        delete($cons->{$key});
+    }
 }
 
 sub stop_ssh_serial {
