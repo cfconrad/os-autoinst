@@ -25,6 +25,7 @@ use File::Basename;
 use IO::Scalar;
 use IO::Select;
 use testapi qw(get_var get_required_var check_var);
+use Data::Dumper;
 
 use constant SERIAL_CONSOLE_DEFAULT_PORT   => 0;
 use constant SERIAL_CONSOLE_DEFAULT_DEVICE => 'console';
@@ -123,56 +124,38 @@ sub get_ssh_output {
     return ($stdout, $stderr);
 }
 
-=head2 run_cmd($ssh, $cmd, %args);
-Runs command to libvirt host over SSH, logs stdout and stderr of the command.
+=head2 run_ssh_cmd
 
-Returns either exit code itself or with stdout and stderr (both in blocking
-mode. C<$args{nonblock}> is for long running process, returns $ssh and $sock
-for handling the process.
-
-# Examples:
-    my $ret = $svirt->run_cmd($ssh, "virsh snapshot-create-as snap1");
-    die "snapshot creation failed" unless $ret == 0;
-
-    my ($ret, $stdout, $stderr) = $svirt->run_cmd($ssh, "grep -q '$marker' $log", wantarray => 1);
-    my ($ssh, $chan) = $svirt->run_cmd($ssh, $cmd_full, nonblock => 1);
-=cut
-sub run_cmd {
-    my ($ssh, $cmd, %args) = @_;
-    bmwqemu::log_call(@_);
-
-    my $chan = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for executing \"$cmd\"");
-    $chan->exec($cmd) || $ssh->die_with_error("Unable to execute \"$cmd\"");
-    if ($args{nonblock}) {
-        bmwqemu::diag("Run command: '$cmd' (nonblock)");
-        return ($ssh, $chan);
-    }
-
-    my ($stdout, $errout) = get_ssh_output($chan);
-    $chan->send_eof;
-    my $ret = $chan->exit_status();
-    bmwqemu::diag("Command executed: '$cmd', ret=$ret");
-    $chan->close();
-
-    return $args{wantarray} ? ($ret, $stdout, $errout) : $ret;
-}
-
-=head2
+   $obj->run_ssh_cmd($cmd [, username=>?][, password=>?][,
 See parameters and examples at C<run_cmd>.
 =cut
 sub run_ssh_cmd {
     my ($self, $cmd, %args) = @_;
+    my ($ssh, $chan) = $self->run_ssh($cmd, %args);
+    $chan->send_eof;
 
-    $args{hostname} //= get_required_var('VIRSH_HOSTNAME');
-    $args{password} //= get_var('VIRSH_PASSWORD');
+    my ($stdout, $errout) = get_ssh_output($chan);
+    my $ret = $chan->exit_status();
+    $ssh->disconnect();
 
-    $self->{ssh} = $self->new_ssh_connection(
+    return $args{wantarray} ? ($ret, $stdout, $errout) : $ret;
+}
+
+sub run_ssh {
+    my ($self, $cmd, %args) = @_;
+    my $credentials = $self->read_credentials_from_virsh_variables;
+    $args{$_} //= $credentials->{$_} foreach (qw(hostname username password));
+
+    # We do not trust on channel's so reconnect with each command
+    my $ssh = $self->new_ssh_connection(
         hostname => $args{hostname},
         password => $args{password},
         username => 'root'
     );
 
-    return run_cmd($self->{ssh}, $cmd, %args);
+    my $chan = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for executing \"$cmd\"");
+    $chan->exec($cmd) || $ssh->die_with_error("Unable to execute \"$cmd\"");
+    return ($ssh, $chan);
 }
 
 sub scp_get {
@@ -358,7 +341,7 @@ sub open_serial_console_via_ssh {
     $cmd_full = "script -f $log -c '$cmd; echo \"$marker \$?\"'";
     bmwqemu::diag("Starting SSH connection to connect to libvirt domain '$name' (cmd: '$cmd'), full cmd: '$cmd_full'");
 
-    ($ssh, $chan) = $self->run_ssh_cmd($cmd_full, nonblock => 1);
+    ($ssh, $chan) = $self->run_ssh($cmd_full);
     ($ret, $stdout, $stderr) = $self->run_ssh_cmd("grep -q '^$marker' $log", wantarray => 1);
     $self->{need_delete_log} = 1;
     if (!$ret) {

@@ -276,7 +276,7 @@ sub log_call {
     update_line_number();
     my @result;
     while (my ($key, $value) = splice(@_, 0, 2)) {
-        push @result, join("=", $key, pp($value));
+        push @result, join("=", pp($key), pp($value));
     }
     my $params = join(", ", @result);
     $logger = Mojo::Log->new(level => 'debug', format => \&log_format_callback) unless $logger;
