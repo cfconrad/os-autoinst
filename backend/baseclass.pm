@@ -1206,6 +1206,8 @@ sub start_ssh_serial {
 
     $self->stop_ssh_serial;
 
+    my $credentials = $self->get_ssh_credentials;
+    $args{$_} //= $credentials->{$_} foreach (qw(hostname username password));
     my $ssh  = $self->{serial}      = $self->new_ssh_connection(%args);
     my $chan = $self->{serial_chan} = $ssh->channel();
     if (!$chan) {
@@ -1233,6 +1235,60 @@ sub check_ssh_serial {
     }
     return;
 }
+
+sub read_ssh_channel_output {
+    my ($self, $chan) = @_;
+    die 'No channel found' unless $chan;
+
+    my ($stdout, $stderr) = ('', '');
+    while (!$chan->eof) {
+        if (my ($o, $e) = $chan->read2) {
+            $stdout .= $o;
+            $stderr .= $e;
+        }
+    }
+    chomp($stdout, $stderr);
+    bmwqemu::diag("Command's stdout:\n$stdout") if length($stdout);
+    bmwqemu::diag("Command's stderr:\n$stderr") if length($stderr);
+    return ($stdout, $stderr);
+}
+
+
+=head2 run_ssh_cmd
+
+   $obj->run_ssh_cmd($cmd [, username=>?][, password=>?][,
+See parameters and examples at C<run_cmd>.
+=cut
+sub run_ssh_cmd {
+    my ($self, $cmd, %args) = @_;
+    my ($ssh, $chan) = $self->run_ssh($cmd, %args);
+    $chan->send_eof;
+
+    my ($stdout, $errout) = $self->read_ssh_channel_output($chan);
+    my $ret = $chan->exit_status();
+    $ssh->disconnect();
+
+    return $args{wantarray} ? ($ret, $stdout, $errout) : $ret;
+}
+
+sub run_ssh {
+    my ($self, $cmd, %args) = @_;
+    my $credentials = $self->get_ssh_credentials;
+    $args{$_} //= $credentials->{$_} foreach (qw(hostname username password));
+    $args{blocking} //= 1;
+    # We do not trust on channel's so reconnect with each command
+    my $ssh = $self->new_ssh_connection(
+        hostname => $args{hostname},
+        password => $args{password},
+        username => $args{username},
+    );
+    $ssh->blocking($args{blocking});
+    my $chan = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for executing \"$cmd\"");
+    $chan->exec($cmd) || $ssh->die_with_error("Unable to execute \"$cmd\"");
+    return ($ssh, $chan);
+}
+
+
 
 sub stop_ssh_serial {
     my ($self) = @_;

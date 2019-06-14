@@ -107,63 +107,11 @@ sub do_stop_vm {
 }
 
 # Log stdout and stderr and return them in a list (comped).
-sub get_ssh_output {
-    my ($chan) = @_;
-    die 'No channel found' unless $chan;
-
-    my ($stdout, $stderr) = ('', '');
-    while (!$chan->eof) {
-        if (my ($o, $e) = $chan->read2) {
-            $stdout .= $o;
-            $stderr .= $e;
-        }
-    }
-    chomp($stdout, $stderr);
-    bmwqemu::diag("Command's stdout:\n$stdout") if length($stdout);
-    bmwqemu::diag("Command's stderr:\n$stderr") if length($stderr);
-    return ($stdout, $stderr);
-}
-
-=head2 run_ssh_cmd
-
-   $obj->run_ssh_cmd($cmd [, username=>?][, password=>?][,
-See parameters and examples at C<run_cmd>.
-=cut
-sub run_ssh_cmd {
-    my ($self, $cmd, %args) = @_;
-    my ($ssh, $chan) = $self->run_ssh($cmd, %args);
-    $chan->send_eof;
-
-    my ($stdout, $errout) = get_ssh_output($chan);
-    my $ret = $chan->exit_status();
-    $ssh->disconnect();
-
-    return $args{wantarray} ? ($ret, $stdout, $errout) : $ret;
-}
-
-sub run_ssh {
-    my ($self, $cmd, %args) = @_;
-    my $credentials = $self->read_credentials_from_virsh_variables;
-    $args{$_} //= $credentials->{$_} foreach (qw(hostname username password));
-
-    # We do not trust on channel's so reconnect with each command
-    my $ssh = $self->new_ssh_connection(
-        hostname => $args{hostname},
-        password => $args{password},
-        username => 'root'
-    );
-
-    my $chan = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for executing \"$cmd\"");
-    $chan->exec($cmd) || $ssh->die_with_error("Unable to execute \"$cmd\"");
-    return ($ssh, $chan);
-}
-
 sub scp_get {
     my ($self, $src, $dest) = @_;
     bmwqemu::log_call(@_);
 
-    my $credentials = $self->read_credentials_from_virsh_variables;
-    my $ssh         = $self->new_ssh_connection(%$credentials);
+    my $ssh = $self->new_ssh_connection();
 
     open(my $fh, '>', $dest) or die "Could not open file '$dest' $!";
     bmwqemu::diag("SCP file: '$src' => '$dest'");
@@ -227,10 +175,9 @@ sub load_snapshot {
     my $rsp;
     my $post_load_snapshot_command = '';
     if (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
-        my $ps          = 'powershell -Command';
-        my %credentials = {hostname => get_required_var('VIRSH_GUEST'), password => get_var('VIRSH_GUEST_PASSWORD')};
+        my $ps = 'powershell -Command';
         $rsp = $self->run_ssh_cmd("$ps Restore-VMSnapshot -VMName $vmname -Name $snapname -Confirm:\$false");
-        $self->run_ssh_cmd("mv -v xfreerdp_${vmname}_stop xfreerdp_${vmname}_stop.bkp", %credentials);
+        $self->run_ssh_cmd("mv -v xfreerdp_${vmname}_stop xfreerdp_${vmname}_stop.bkp");
 
         for my $i (1 .. 5) {
             # Because of FreeRDP issue https://github.com/FreeRDP/FreeRDP/issues/3876,
@@ -238,7 +185,7 @@ sub load_snapshot {
             sleep 10;
             last
               unless $self->run_ssh_cmd(
-                "pgrep --full --list-full xfreerdp.*\$(cat xfreerdp_${vmname}_stop.bkp)", %credentials);
+                "pgrep --full --list-full xfreerdp.*\$(cat xfreerdp_${vmname}_stop.bkp)");
             $self->die("xfreerdp did not start") if ($i eq 5);
         }
     }
@@ -256,8 +203,8 @@ sub load_snapshot {
 # to VM host (VIRSH_HOSTNAME) or intermediary which handles VNC (VIRSH_GUEST).
 # Then it'd be possible to use it for run_ssh_cmd() as well (and remove duplicity
 # in load_snapshot()).
-sub read_credentials_from_virsh_variables {
-    my ($self, %args) = @_;
+sub get_ssh_credentials {
+    my ($self) = @_;
 
     my ($hostname, $username, $password);
     if (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
@@ -269,9 +216,10 @@ sub read_credentials_from_virsh_variables {
         $username = get_var('VIRSH_USERNAME');
         $password = get_var('VIRSH_PASSWORD');
     }
+    $username //= 'root';
     return {
         hostname => $hostname,
-        username => ($username // 'root'),
+        username => $username,
         password => $password,
     };
 }
@@ -279,8 +227,7 @@ sub read_credentials_from_virsh_variables {
 sub start_serial_grab {
     my ($self, $name) = @_;
 
-    my $credentials = $self->read_credentials_from_virsh_variables;
-    my ($ssh, $chan) = $self->start_ssh_serial(%$credentials);
+    my ($ssh, $chan) = $self->start_ssh_serial();
     my $cmd;
     if (check_var('VIRSH_VMM_FAMILY', 'vmware')) {
         # libvirt esx driver does not support `virsh console', so

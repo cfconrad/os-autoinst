@@ -66,8 +66,9 @@ sub activate {
     my $backend = $self->{backend};
     bmwqemu::diag("Activate console on libvirt_domain:" . $self->{libvirt_domain});
     my ($ssh, $chan) = $backend->open_serial_console_via_ssh($self->{libvirt_domain},
-        devname => $self->{pty_dev}, port => $self->{serial_port_no}, is_terminal => 1);
+        devname => $self->{pty_dev}, port => $self->{serial_port_no}, is_terminal => 1, blocking => 0);
     $self->{screen} = consoles::serial_screen->new($chan, $ssh->sock);
+    $self->{ssh}    = $ssh;
     return;
 }
 

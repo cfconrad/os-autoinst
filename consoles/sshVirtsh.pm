@@ -27,6 +27,7 @@ use XML::LibXML;
 use File::Temp 'tempfile';
 use File::Basename;
 use Class::Accessor 'antlers';
+use Data::Dumper;
 
 use backend::svirt;
 use testapi qw(get_var get_required_var check_var set_var);
@@ -54,8 +55,7 @@ sub activate {
     my $args = $self->{args};
 
     # initialize SSH console(s)
-    $self->_init_ssh(ssh             => $args);
-    $self->_init_ssh(sshVMwareServer => $args) if ($self->vmm_family eq 'vmware');
+    $self->_init_ssh($args);
 
     # start Xvnc
     $self->SUPER::activate;
@@ -65,25 +65,31 @@ sub activate {
 
 # initializes the SSH console(s), $domain is used to distinguish between the regular SSH console and the one to the VMware server
 sub _init_ssh {
-    my ($self, $domain, $args) = @_;
-
-    my %connection_settings;
-    if ($domain eq 'ssh') {
-        %connection_settings = (
-            hostname => ($args->{hostname} || die('we need a hostname to ssh to')),
+    my ($self, $args) = @_;
+    print("CLEMIX: " . Dumper($args) . $/);
+    $self->{ssh_credentials} = {
+        ssh => {
+            hostname => $args->{hostname} || die('we need a hostname to ssh to'),
             username => $args->{username},
             password => $args->{password},
-        );
-    } elsif ($domain eq 'sshVMwareServer') {
-        %connection_settings = (
+        }
+    };
+    if ($self->vmm_family eq 'vmware') {
+        $self->{ssh_credentials}->{sshVMwareServer} =
+          {
             hostname => get_required_var('VMWARE_HOST'),
             password => get_required_var('VMWARE_PASSWORD'),
-        );
-    } else {
-        die "can not initialize SSH console for domain \"$domain\"";
+            username => 'root',
+          };
     }
+    print("CLEMIX: SSH_CREDENTIALS" . Dumper($self->{ssh_credentials}) . $/);
+}
 
-    return $self->{$domain} = $self->backend->new_ssh_connection(%connection_settings);
+sub get_ssh_credentials {
+    my ($self, $domain) = @_;
+    $domain //= 'ssh';
+    die("Unknown ssh credentials domain $domain") unless (exists($self->{ssh_credentials}->{$domain}));
+    return %{$self->{ssh_credentials}->{$domain}};
 }
 
 # creates an XML document to configure the libvirt domain
@@ -345,21 +351,16 @@ sub add_disk {
             my $vmware_disk_path = $vmware_openqa_datastore . $file;
             # Power VM off, delete it's disk image, and create it again.
             # Than wait for some time for the VM to *really* turn off.
-            my $ssh         = $self->{sshVMwareServer};
-            my $vmware_chan = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for adding disk");
-            $vmware_chan->exec(
-                "( set -x; vmid=\$(vim-cmd vmsvc/getallvms | awk \'/$name/ { print \$1 }\');" .
-                  'if [ $vmid ]; then ' .
-                  'vim-cmd vmsvc/power.off $vmid;' .
-                  'vim-cmd vmsvc/destroy $vmid;' .
-                  'fi;' .
-                  "vmkfstools -v1 -U $vmware_disk_path;" .
-                  "vmkfstools -v1 -c $size --diskformat thin $vmware_disk_path; sleep 10 ) 2>&1"
-            ) || $ssh->die_with_error("Unable to execute command for adding disk");
-            $vmware_chan->send_eof;
-            backend::svirt::get_ssh_output($vmware_chan);
-            $vmware_chan->close();
-            die "Can't create VMware image $vmware_disk_path" if $vmware_chan->exit_status();
+            my $cmd =
+              "( set -x; vmid=\$(vim-cmd vmsvc/getallvms | awk \'/$name/ { print \$1 }\');" .
+              'if [ $vmid ]; then ' .
+              'vim-cmd vmsvc/power.off $vmid;' .
+              'vim-cmd vmsvc/destroy $vmid;' .
+              'fi;' .
+              "vmkfstools -v1 -U $vmware_disk_path;" .
+              "vmkfstools -v1 -c $size --diskformat thin $vmware_disk_path; sleep 10 ) 2>&1";
+            my $retval = $self->run_cmd($cmd, domain => 'ssh_VMwareServer');
+            die "Can't create VMware image $vmware_disk_path" if $retval;
         }
         else {
             $file = $basedir . $file;
@@ -377,37 +378,28 @@ sub add_disk {
                 # otherwise copy image from NFS datastore.
                 my $nfs_dir              = $backingfile ? 'hdd' : 'iso';
                 my $vmware_nfs_datastore = get_required_var('VMWARE_NFS_DATASTORE');
-                my $ssh                  = $self->{sshVMwareServer};
-                my $vmware_chan          = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for adding disk");
-                $vmware_chan->exec(
-                    "if test -e $vmware_openqa_datastore$file_basename; then " .
-                      "while lsof | grep 'cp.*$file_basename'; do " .
-                      "echo File $file_basename is being copied by other process, sleeping for 60 seconds; sleep 60;" .
-                      'done;' .
-                      'else ' .
-                      "cp /vmfs/volumes/$vmware_nfs_datastore/$nfs_dir/$file_basename $vmware_openqa_datastore;" .
-                      'fi;'
-                ) || $ssh->die_with_error("Unable to execute command to copy VMware image $file_basename");
-                $vmware_chan->send_eof;
-                backend::svirt::get_ssh_output($vmware_chan);
-                $vmware_chan->close();
-                die "Can't copy VMware image $file_basename" if $vmware_chan->exit_status();
+                my $cmd =
+                  "if test -e $vmware_openqa_datastore$file_basename; then " .
+                  "while lsof | grep 'cp.*$file_basename'; do " .
+                  "echo File $file_basename is being copied by other process, sleeping for 60 seconds; sleep 60;" .
+                  'done;' .
+                  'else ' .
+                  "cp /vmfs/volumes/$vmware_nfs_datastore/$nfs_dir/$file_basename $vmware_openqa_datastore;" .
+                  'fi;';
+                my $retval = $self->run_cmd($cmd, domain => 'sshVMwareServer');
+                die "Can't copy VMware image $file_basename" if $retval;
                 if ($backingfile) {
                     # Power VM off, delete it's disk image, and create it again.
                     # Than wait for some time for the VM to *really* turn off.
-                    $vmware_chan = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for adding disk");
-                    $vmware_chan->exec(
-                        "( set -x; vmid=\$(vim-cmd vmsvc/getallvms | awk \'/$name/ { print \$1 }\');" .
-                          'if [ $vmid ]; then ' .
-                          'vim-cmd vmsvc/power.off $vmid;' .
-                          'fi;' .
-                          "vmkfstools -v1 -U $vmware_disk_path_thinfile;" .
-                          "vmkfstools -v1 -i $vmware_disk_path --diskformat thin $vmware_disk_path_thinfile; sleep 10 ) 2>&1"
-                    ) || $ssh->die_with_error("Unable to execute command to create thin VMware image");
-                    $vmware_chan->send_eof;
-                    backend::svirt::get_ssh_output($vmware_chan);
-                    $vmware_chan->close();
-                    die "Can't create thin VMware image" if $vmware_chan->exit_status();
+                    my $cmd =
+                      "( set -x; vmid=\$(vim-cmd vmsvc/getallvms | awk \'/$name/ { print \$1 }\');" .
+                      'if [ $vmid ]; then ' .
+                      'vim-cmd vmsvc/power.off $vmid;' .
+                      'fi;' .
+                      "vmkfstools -v1 -U $vmware_disk_path_thinfile;" .
+                      "vmkfstools -v1 -i $vmware_disk_path --diskformat thin $vmware_disk_path_thinfile; sleep 10 ) 2>&1";
+                    my $retval = $self->run_cmd($cmd, domain => 'sshVMwareServer');
+                    die "Can't create thin VMware image" if $retval;
                 }
             }
             else {
@@ -559,16 +551,13 @@ __END"
     my $instance    = $self->instance;
     my $xmldata     = $self->{domainxml}->toString(2);
     my $xmlfilename = "/var/lib/libvirt/images/" . $self->name . ".xml";
-    my $ssh         = $self->{ssh};
-    my $chan        = $ssh->channel() || $ssh->die_with_error("Unable to create SSH channel for writing virsh config");
     my $ret;
-
     bmwqemu::diag("Creating libvirt configuration file $xmlfilename:\n$xmldata");
-
+    my ($ssh, $chan) = $self->backend->run_ssh("cat > $xmlfilename", $self->get_ssh_credentials());
     # scp_put is unfortunately unreliable (RT#61771)
-    $chan->exec("cat > $xmlfilename") || $ssh->die_with_error();
     $chan->write($xmldata) || $ssh->die_with_error();
     $chan->close();
+    $ssh->disconnect();
 
     # shut down possibly running previous test (just to be sure) - ignore errors
     # just making sure we continue after the command finished
@@ -579,7 +568,7 @@ __END"
     # define the new domain
     $self->run_cmd("virsh $remote_vmm define $xmlfilename") && die "virsh define failed";
     if ($self->vmm_family eq 'vmware') {
-        $self->get_cmd_output('echo bios.bootDelay = \"10000\" >> /vmfs/volumes/datastore1/openQA/' . $self->name . '.vmx', {domain => 'sshVMwareServer'});
+        $self->run_cmd('echo bios.bootDelay = \"10000\" >> /vmfs/volumes/datastore1/openQA/' . $self->name . '.vmx', domain => 'sshVMwareServer');
     }
 
     $ret = $self->run_cmd("virsh $remote_vmm start " . $self->name);
@@ -625,8 +614,9 @@ sub stop_serial_grab {
 #   my $ret = $svirt->run_cmd("virsh snapshot-create-as snap1");
 #   die "snapshot creation failed" unless $ret == 0;
 sub run_cmd {
-    my ($self, $cmd) = @_;
-    return backend::svirt::run_cmd($self->{ssh}, $cmd);
+    my ($self, $cmd, %args) = @_;
+    $args{domain} //= 'ssh';
+    return $self->backend->run_ssh_cmd($cmd, $self->get_ssh_credentials($args{domain}));
 }
 
 # Executes command and in list context returns pair of standard output and standard error
@@ -636,29 +626,8 @@ sub get_cmd_output {
 
     my $wantarray = $args->{wantarray};
     my $domain    = $args->{domain} // 'ssh';
-    my $ssh       = $self->{$domain};
-    if (!$ssh) {
-        die "get_cmd_output has been called with domain \"$domain\" but no such SSH console has been activated";
-    }
-
-    # create a new channel; try to re-establish the SSH connection on failure
-    my $chan = $ssh->channel();
-    if (!$chan) {
-        $ssh  = $self->_init_ssh($domain);
-        $chan = $ssh->channel() || $ssh->die_with_error("unable to create channel for SSH console \"$domain\"");
-    }
-
-    # execute command
-    if (!$chan->exec($cmd)) {
-        $ssh->die_with_error("unable to execute command \"$cmd\" via SSH console \"$domain\"");
-    }
-
-    # read output and close channel
-    bmwqemu::diag "Command executed: $cmd";
-    my @cmd_output = backend::svirt::get_ssh_output($chan);
-    $chan->send_eof();
-    $chan->close();
-    return $wantarray ? \@cmd_output : $cmd_output[0];
+    my @ret       = $self->backend->run_ssh_cmd($cmd, $self->get_ssh_credentials($domain), wantarray => 1);
+    print("CLEMIX: " . Dumper(\@ret) . $/);
+    return $wantarray ? ($ret[1], $ret[2]) : $ret[1];
 }
-
 1;
