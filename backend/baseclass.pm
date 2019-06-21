@@ -1241,14 +1241,13 @@ sub start_ssh_serial {
 
 sub check_ssh_serial {
     my ($self, $fh) = @_;
+    my $read_size = 1024;
+    my $buffer;
 
     if ($self->{serial} && $self->{serial}->sock == $fh) {
-        my $chan = $self->{serial_chan};
-        my $line = <$chan>;
-        if (defined $line) {
-            print $line;
+        if (defined($self->{serial_chan}->read($buffer, $read_size))) {
             open(my $serial, '>>', $self->{serialfile});
-            print $serial $line;
+            print $serial $buffer;
             close($serial);
         }
         return 1;
