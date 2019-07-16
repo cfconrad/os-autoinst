@@ -232,10 +232,15 @@ sub read_until {
             return {matched => 0, string => ($overflow || '') . $rbuf};
         }
 
+        print("CLEMIX do select " . remaining($sttime, $timeout) . $/);
         my $nfound = select(my $rout = $rin, undef, my $eout = $rin, remaining($sttime, $timeout));
         if ($nfound < 0) {
             croak "Failed to select socket for reading: $ERRNO";
+        } elsif ($nfound == 0) {
+            print("CLEMIX timeout in select $/");
+            next READ;
         }
+        print("CLEMIX nfound: $nfound $/");
 
         my $read = sysread($fd, $buf, $buflen / 2);
         unless (defined $read) {
@@ -266,7 +271,11 @@ sub read_until {
     if ($nargs{exclude_match}) {
         return $overflow . $prematch;
     }
-    return {matched => 1, string => $overflow . $prematch . $match};
+    if (length($overflow . $prematch) > 512) {
+        return {matched => 1, string => "CLEMIX FAKE OUTPUT!!" . $match};
+    } else {
+        return {matched => 1, string => $overflow . $prematch . $match};
+    }
 }
 
 =head2 peak

@@ -818,7 +818,13 @@ sub wait_serial {
 
     confess '\'current_console\' is not set' unless $self->{current_console};
     if ($self->{current_console}->is_serial_terminal) {
-        return $self->{current_screen}->read_until($regexp, $timeout, %$args);
+        my $ret = $self->{current_screen}->read_until($regexp, $timeout, %$args);
+        if ($ret->{matched} == 0) {
+            if ($self->{current_console}->can('recover')) {
+                $self->{current_console}->recover();
+            }
+        }
+        return $ret;
     }
 
     if (ref $regexp ne 'ARRAY') {

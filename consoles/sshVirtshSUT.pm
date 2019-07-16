@@ -23,6 +23,7 @@ use base 'consoles::console';
 use testapi 'get_var';
 use backend::svirt qw(SERIAL_TERMINAL_DEFAULT_PORT SERIAL_TERMINAL_DEFAULT_DEVICE);
 use consoles::serial_screen;
+use Data::Dumper;
 
 sub new {
     my ($class, $testapi_console, $args) = @_;
@@ -67,10 +68,38 @@ sub activate {
     bmwqemu::diag(sprintf("Activate console on libvirt_domain:%s devname:%s port:%s",
             $self->{libvirt_domain}, $self->{pty_dev}, $self->{serial_port_no}));
     my ($ssh, $chan) = $backend->open_serial_console_via_ssh(
-        $self->{libvirt_domain}, devname => $self->{pty_dev}, port => $self->{serial_port_no}, blocking => 0);
+        $self->{libvirt_domain}, devname => $self->{pty_dev}, port => $self->{serial_port_no});
     $self->{screen} = consoles::serial_screen->new($chan, $ssh->sock);
     $self->{ssh}    = $ssh;
+    $ssh->debug(1);
     return;
+}
+
+sub recover {
+    my ($self) = @_;
+    print("CLEMIX try to do recover!!$/");
+    print("SSH: " . Dumper($self->{ssh}) . $/);
+    my $backend = $self->{backend};
+    my $screen  = $self->{screen};
+    my $ssh     = $self->{ssh};
+    my $log     = $backend->serial_terminal_log_file();
+    $backend->run_ssh_cmd("ps -aux", wantarray => 1, keep_open => 0);
+    my ($retval, $stdout, undef) = $backend->run_ssh_cmd("cat $log", wantarray => 1, keep_open => 0);
+    if ($retval == 0) {
+        print("CLEMIX " . "X" x 80 . "START" . $/);
+        print($stdout);
+        print($/);
+        print("CLEMIX " . "X" x 80 . "END" . $/);
+    } else {
+        print("CLEMIX Failed to cat $log file $/");
+    }
+
+    print("CLEMIX " . Dumper($screen) . $/);
+    my $idx = index($stdout, $screen->{carry_buffer});
+    print("CLEMIX found index: $idx .$/");
+
+    my @error = $ssh->error();
+    print("CLEMIX SSH_ERROR:" . Dumper(\@error) . $/);
 }
 
 sub is_serial_terminal {
