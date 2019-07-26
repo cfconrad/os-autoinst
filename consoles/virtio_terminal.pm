@@ -29,6 +29,7 @@ use Scalar::Util 'blessed';
 use Cwd;
 use consoles::serial_screen ();
 use testapi 'check_var';
+use IO::Socket::INET;
 
 our $VERSION;
 
@@ -59,9 +60,15 @@ sub new {
     my ($class, $testapi_console, $args) = @_;
     my $self = $class->SUPER::new($testapi_console, $args);
     $self->{socket_fd}      = 0;
-    $self->{socket_path}    = $self->{args}->{socked_path} // cwd() . '/virtio_console';
+    $self->{console_num}    = $self->{args}->{console_num} // 0;
     $self->{snapshots}      = {};
     $self->{preload_buffer} = '';
+
+    # W/A for backward compatibility
+    if (defined($self->{socked_path})) {
+        my ($i) = $self->{socked_path} =~ /virtio_console(\d+)$/;
+        die("Missing console_num in socked_path") unless (defined($i));
+    }
     return $self;
 }
 
@@ -99,22 +106,12 @@ sub load_snapshot {
     }
 }
 
-=head2 socket_path
-
-The file system path bound to a UNIX socket which will be used to transfer
-terminal data between the host and guest.
-
-=cut
-sub socket_path {
-    my ($self) = @_;
-    return $self->{socket_path};
-}
-
 =head2 open_socket
 
   open_socket();
 
-Opens a unix socket to the character device located at $socket_path.
+Opens a socket to the host end of the virtio_console. This need to be
+corresponding to the console which was created by qemu-backend.
 
 Returns the file descriptor for the open socket, otherwise it dies.
 
@@ -122,13 +119,13 @@ Returns the file descriptor for the open socket, otherwise it dies.
 sub open_socket {
     my ($self) = @_;
     my $fd;
-    bmwqemu::log_call(socket_path => $self->socket_path);
+    my $port;
+    my $vars = \%bmwqemu::vars;
+    bmwqemu::log_call(console_num => $self->{console_num});
 
-    (-S $self->socket_path) || croak 'Could not find ' . $self->socket_path;
-    socket($fd, PF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0)
-      || croak 'Could not create Unix socket: ' . $ERRNO;
-    connect($fd, sockaddr_un($self->socket_path))
-      || croak 'Could not connect to virtio-console chardev socket: ' . $ERRNO;
+    $port = 62600 + $self->{console_num} + 10 * ($vars->{WORKER_INSTANCE} // 0);
+    $fd   = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp')
+      or die('Connection to virtio_terminal nr ' . $self->{console_num} . ' failed on port ' . $port);
 
     return $fd;
 }

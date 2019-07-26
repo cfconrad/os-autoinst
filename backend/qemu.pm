@@ -846,7 +846,8 @@ sub start_qemu {
             sp('device', 'virtio-serial');
             for (my $i = 0; $i < ($vars->{VIRTIO_CONSOLE_NUM} // 1); $i++) {
                 my $name = 'virtio_console' . ($i ? $i : '');
-                sp('chardev', [qv "socket path=$name server nowait id=$name logfile=$name.log logappend=on"]);
+                my $port = 62600 + $i + 10 * ($vars->{WORKER_INSTANCE} // 0);
+                sp('chardev', [qv "socket port=$port host=127.0.0.1 ipv4 nodelay server nowait id=$name logfile=$name.log logappend=on"]);
                 sp('device',  [qv "virtconsole chardev=$name name=org.openqa.console.$name"]);
             }
         }

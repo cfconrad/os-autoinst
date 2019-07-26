@@ -30,6 +30,11 @@ sub new {
     my $self = bless {class => $class}, $class;
     $self->{socket_fd}    = $socket_fd;
     $self->{carry_buffer} = '';
+
+    my $old_fh = select($socket_fd);
+    $| = 1;
+    select($old_fh);
+
     return $self;
 }
 
