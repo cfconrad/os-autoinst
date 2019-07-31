@@ -28,8 +28,9 @@ use Carp 'croak';
 use Scalar::Util 'blessed';
 use Cwd;
 use consoles::serial_screen ();
-use testapi 'check_var';
+use testapi qw(check_var get_var);
 use IO::Socket::INET;
+use Fcntl;
 
 our $VERSION;
 
@@ -49,8 +50,8 @@ where it can start a tty on the virtual console. By default openSUSE and SLE
 automatically start agetty when the kernel finds the virtio console device, but
 another OS may require some additional configuration.
 
-It may also be possible to use a transport other than virtio. This code just
-requires a UNIX socket which inputs and outputs terminal ASCII/ANSI codes.
+It may also be possible to use a transport other than virtio. This code
+uses two pipes to communicate with virtio_consoles from qemu.
 
 =head1 SUBROUTINES/METHODS
 
@@ -59,16 +60,11 @@ requires a UNIX socket which inputs and outputs terminal ASCII/ANSI codes.
 sub new {
     my ($class, $testapi_console, $args) = @_;
     my $self = $class->SUPER::new($testapi_console, $args);
-    $self->{socket_fd}      = 0;
-    $self->{console_num}    = $self->{args}->{console_num} // 0;
+    $self->{fd_read}        = 0;
+    $self->{fd_write}       = 0;
+    $self->{pipe_prefix}    = $self->{args}->{socked_path} // cwd() . '/virtio_console';
     $self->{snapshots}      = {};
     $self->{preload_buffer} = '';
-
-    # W/A for backward compatibility
-    if (defined($self->{socked_path})) {
-        my ($i) = $self->{socked_path} =~ /virtio_console(\d+)$/;
-        die("Missing console_num in socked_path") unless (defined($i));
-    }
     return $self;
 }
 
@@ -79,10 +75,12 @@ sub screen {
 
 sub disable {
     my ($self) = @_;
-    if ($self->{socket_fd} > 0) {
-        close $self->{socket_fd};
-        $self->{socket_fd} = 0;
-        $self->{screen}    = undef;
+    if ($self->{fd_read} > 0) {
+        close $self->{fd_read};
+        close $self->{fd_write};
+        $self->{fd_read}  = 0;
+        $self->{fd_write} = 0;
+        $self->{screen}   = undef;
     }
 }
 
@@ -110,33 +108,38 @@ sub load_snapshot {
 
   open_socket();
 
-Opens a socket to the host end of the virtio_console. This need to be
-corresponding to the console which was created by qemu-backend.
+Opens a the read and write pipe based on C<$pipe_prefix>.
 
-Returns the file descriptor for the open socket, otherwise it dies.
+Returns the read and write file descriptors for the open sockets,
+otherwise it dies.
 
 =cut
 sub open_socket {
     my ($self) = @_;
-    my $fd;
-    my $port;
-    my $vars = \%bmwqemu::vars;
-    bmwqemu::log_call(console_num => $self->{console_num});
+    bmwqemu::log_call(pipe_prefix => $self->{pipe_prefix});
 
-    $port = 62600 + $self->{console_num} + 10 * ($vars->{WORKER_INSTANCE} // 0);
-    $fd   = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp')
-      or die('Connection to virtio_terminal nr ' . $self->{console_num} . ' failed on port ' . $port);
+    sysopen(my $fd_w, $self->{pipe_prefix} . '.in', O_WRONLY)
+      or die "Can't open in pipe for writing $!";
+    sysopen(my $fd_r, $self->{pipe_prefix} . '.out', O_NONBLOCK | O_RDONLY)
+      or die "Can't open out pipe for reading $!";
 
-    return $fd;
+    my $newsize = get_var('VIRTIO_CONSOLE_PIPE_SZ', 1024 * 1024);
+    for my $fd (($fd_w, $fd_r)) {
+        my $old = fcntl($fd, Fcntl::F_GETPIPE_SZ, 0);
+        my $new = fcntl($fd, Fcntl::F_SETPIPE_SZ, int($newsize));
+        bmwqemu::fctinfo("Set PIPE_SZ from $old to $new");
+    }
+
+    return ($fd_r, $fd_w);
 }
 
 sub activate {
     my ($self) = @_;
     if (!check_var('VIRTIO_CONSOLE', 0)) {
-        $self->{socket_fd}              = $self->open_socket unless $self->{socket_fd};
-        $self->{screen}                 = consoles::serial_screen::->new($self->{socket_fd});
+        ($self->{fd_read}, $self->{fd_write}) = $self->open_socket() unless ($self->{fd_read});
+        $self->{screen} = consoles::serial_screen::->new($self->{fd_read}, $self->{fd_write});
         $self->{screen}->{carry_buffer} = $self->{preload_buffer};
-        $self->{preload_buffer}         = '';
+        $self->{preload_buffer} = '';
     }
     else {
         croak 'VIRTIO_CONSOLE is set 0, so no virtio-serial and virtconsole devices will be available to use with this console.';
