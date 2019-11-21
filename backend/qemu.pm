@@ -348,6 +348,8 @@ sub save_memory_dump {
             $compress_method = 'bzip2';
         }
     }
+    print("CLEMIX FORCE AUTODIE$/");
+    system("false");
 
     if ($compress_method eq 'bzip2') {
         runcmd('bzip2', "-v$compress_level", "ulogs/$filename");

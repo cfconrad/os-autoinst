@@ -84,6 +84,7 @@ sub handle_command {
 sub die_handler {
     my $msg = shift;
     bmwqemu::diag "Backend process died, backend errors are reported below in the following lines:\n$msg";
+    print("CLEMIX die_handler() called $msg$/");
     $backend->stop_vm();
     $backend->close_pipes();
 }
