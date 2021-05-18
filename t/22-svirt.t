@@ -65,6 +65,7 @@ is_deeply($svirt_sut_console, {
         serial_port_no  => 1,
         testapi_console => 'sut-serial',
         pty_dev         => SERIAL_TERMINAL_DEFAULT_DEVICE,
+        snapshots       => {},
 }, 'SUT serial console correctly initialized') or diag explain $consoles;
 
 subtest 'XML config for VNC and serial console' => sub {

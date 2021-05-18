@@ -44,6 +44,7 @@ sub new {
     $self->{testapi_console} = $testapi_console;
     $self->{args}            = $args;
     $self->{activated}       = 0;
+    $self->{snapshots}       = {};
     $self->init;
     return $self;
 }
@@ -83,6 +84,31 @@ sub select {
     }
     $self->trigger_select;
     return $activated;
+}
+
+sub save_snapshot {
+    my ($self, $name) = @_;
+    $self->set_snapshot($name, 'activated', $self->{activated});
+}
+
+sub load_snapshot {
+    my ($self, $name) = @_;
+    $self->{activated} = $self->get_snapshot($name, 'activated') // 0;
+}
+
+sub get_snapshot {
+    my ($self, $name, $key) = @_;
+    return undef unless defined($name);
+
+    my $snapshot = $self->{snapshots}->{$name};
+    return (defined($key) && $snapshot) ? $snapshot->{$key} : $snapshot;
+}
+
+sub set_snapshot {
+    my ($self, $name, $key, $value) = @_;
+    return undef if (!defined($name) || !defined($key));
+
+    $self->{snapshots}->{$name}->{$key} = $value;
 }
 
 sub activate { }

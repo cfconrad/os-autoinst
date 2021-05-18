@@ -63,7 +63,6 @@ sub new {
     $self->{fd_read}        = 0;
     $self->{fd_write}       = 0;
     $self->{pipe_prefix}    = $self->{args}->{socked_path} // cwd() . '/virtio_console';
-    $self->{snapshots}      = {};
     $self->{preload_buffer} = '';
     return $self;
 }
@@ -86,21 +85,20 @@ sub disable {
 
 sub save_snapshot {
     my ($self, $name) = @_;
+    $self->SUPER::save_snapshot($name);
 
-    if (defined($self->{screen})) {
-        $self->{snapshots}->{$name} = $self->{screen}->peak();
-    } else {
-        $self->{snapshots}->{$name} = '';
-    }
+    $self->set_snapshot($name, 'buffer', $self->{screen} ? $self->{screen}->peak() : $self->{preload_buffer});
 }
 
 sub load_snapshot {
     my ($self, $name) = @_;
+    $self->SUPER::load_snapshot($name);
 
+    my $buffer = $self->get_snapshot($name, 'buffer') // '';
     if (defined($self->{screen})) {
-        $self->{screen}->{carry_buffer} = $self->{snapshots}->{$name};
+        $self->{screen}->{carry_buffer} = $buffer;
     } else {
-        $self->{preload_buffer} = $self->{snapshots}->{$name};
+        $self->{preload_buffer} = $buffer;
     }
 }
 
