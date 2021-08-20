@@ -330,7 +330,8 @@ subtest 'Method consoles::sshVirtsh::add_disk()' => sub {
             my $dev_id = 'dev_id_002a';
             @last_ssh_commands = ();
             @ssh_cmd_return    = (0, 0);
-            my $file         = "my_compressed_hdd.vmdk.xz";
+            my $file_wo_xz   = "my_compressed_hdd.vmdk";
+            my $file         = $file_wo_xz.".xz";
             my $vm_name      = $svirt->name;
             my $exp_filename = "${vm_name}${dev_id}.vmdk";
             set_var(VMWARE_NFS_DATASTORE => 'nfs');
@@ -351,7 +352,7 @@ subtest 'Method consoles::sshVirtsh::add_disk()' => sub {
             $cmd = shift @last_ssh_commands;
             like($cmd, qr%xz --decompress --keep --verbose --no-warn --quiet '$exp_fullpath_xz'%, 'Uncompress file with unxz');
             $cmd = shift @last_ssh_commands;
-            like($cmd, qr/vmkfstools -v1 --clonevirtualdisk $vmware_openqa_datastore$file --diskformat thin $exp_fullpath/, "Check size");
+            like($cmd, qr%vmkfstools -v1 --clonevirtualdisk $vmware_openqa_datastore$file_wo_xz --diskformat thin $exp_fullpath%, "Check size");
 
             my $target_nodelist = $svirt->{domainxml}->findnodes('domain/devices/disk[@type="file" and @device="disk"]/target[@dev="hd' . $dev_id . '" and @bus="ide"]');
             is($target_nodelist->size, 1, 'Only one <target> with that dev_id exists');

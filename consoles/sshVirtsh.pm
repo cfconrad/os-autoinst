@@ -445,6 +445,7 @@ sub add_disk {
             $self->run_cmd($cmd, domain => 'sshVMwareServer') && die "Can't copy VMware image $file";
             if ($args->{file} =~ /\.xz$/) {
                 $self->run_cmd(decompress_cmd($abs_path_file), domain => 'sshVMwareServer') && die "Image $abs_path_file decompression has failed!";
+                $abs_path_file =~ s/\.xz$//;
             }
             $self->run_cmd("vmkfstools -v1 --clonevirtualdisk $abs_path_file --diskformat thin $vmware_disk_path", domain => 'sshVMwareServer') &&
               die "Failed while cloning $abs_path_file image";
