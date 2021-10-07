@@ -279,14 +279,9 @@ sub script_output {
         testapi::wait_serial("$marker-0-", quiet => $args{quiet});
     }
     elsif ($args{type_command}) {
-        my $cat = "cat - > $script_path;";
-        testapi::type_string($cat);
-        testapi::send_key('ret');
-        for my $line (split(/\r?\n/, $script)) {
-            testapi::type_string($line);
-            testapi::send_key('ret');
-        }
-        testapi::send_key('ret');
+        testapi::type_string("cat - > $script_path;");
+        testapi::type_string("\n", wait_screen_change => 9999);
+        testapi::type_string("$script\n");
         testapi::send_key('ctrl-d');
     }
     else {
