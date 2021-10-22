@@ -255,7 +255,7 @@ sub script_output {
         }, ['timeout'], @_);
 
     my $marker = testapi::hashed_string("SO$script");
-    my $script_path = "/tmp/script$marker.sh";
+    my $script_path = "/tmp/s$marker";
 
     # prevent use of network for offline installations
     if (testapi::get_var('OFFLINE_SUT')) {
@@ -279,7 +279,7 @@ sub script_output {
         testapi::wait_serial("$marker-0-", quiet => $args{quiet});
     }
     elsif ($args{type_command}) {
-        testapi::type_string("cat - > $script_path;");
+        testapi::type_string("cat ->$script_path");
         testapi::send_key('ret', wait_screen_change => 1);
         testapi::type_string($script . "\n", timeout => $args{timeout});
         testapi::send_key('ctrl-d');
@@ -297,14 +297,14 @@ sub script_output {
     # might encounter on the serial device depending on how it is used in the
     # SUT
     my $shell_cmd = testapi::is_serial_terminal() ? 'bash -oe pipefail' : 'bash -eox pipefail';
-    my $run_script = "echo $marker; $shell_cmd $script_path ; echo SCRIPT_FINISHED$marker-\$?-";
+    my $run_script = "echo $marker;$shell_cmd $script_path;echo SCRIPT_FINISHED$marker-\$?-";
     if (testapi::is_serial_terminal) {
         testapi::wait_serial($self->{serial_term_prompt}, no_regex => 1, quiet => $args{quiet});
         testapi::type_string("$run_script\n");
         testapi::wait_serial($run_script, no_regex => 1, quiet => $args{quiet});
     }
     else {
-        testapi::type_string("($run_script) | tee /dev/$testapi::serialdev\n");
+        testapi::type_string("($run_script)|tee /dev/$testapi::serialdev\n");
     }
     my $output = testapi::wait_serial("SCRIPT_FINISHED$marker-\\d+-", timeout => $args{timeout}, record_output => 1, quiet => $args{quiet})
       || croak "script timeout: $script";
