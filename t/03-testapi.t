@@ -593,7 +593,9 @@ subtest 'validate_script_output' => sub {
 
     $mock_testapi->redefine(script_output => sub ($script, @args) { join(',', @args) });
     my @exp_args_list = (
+        [123, proceed_on_failure => 1, type_command => 1, title => 'title', fail_message => 'fail_message'],
         [123, proceed_on_failure => 1, type_command => 1],
+        [proceed_on_failure => 1, type_command => 1, title => 'title', fail_message => 'fail_message'],
         [proceed_on_failure => 1, type_command => 1],
         [type_command => 1],
         [timeout => 1],
