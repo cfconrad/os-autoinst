@@ -592,10 +592,21 @@ subtest 'validate_script_output' => sub {
     } qr/coderef or regexp/, 'Die on invalid parameter';
 
     my $arguments;
+    my %script_output_defaults = (
+        timeout => undef,
+        proceed_on_failure => undef,
+        quiet => 1,
+        type_command => undef
+    );
+
     $mock_testapi->redefine(script_output => sub ($script, @args) { $arguments = { @args }; return '' });
     my @exp_args_list = (
-        [123, proceed_on_failure => 1, type_command => 1, fail_message => 'fail_message'] => {timeout => 123, proceed_on_failure => 1, type_command => 1, quiet => 1 },
-        [123] => {timeout => 123, quiet => 1, type_command => undef, proceed_on_failure => undef }
+        [123, proceed_on_failure => 1, type_command => 1, fail_message => 'fail_message'] => {%script_output_defaults, timeout => 123, proceed_on_failure => 1, type_command => 1 },
+        [123, title => "FOO"] => {%script_output_defaults, timeout => 123 },
+        [title => "FOO", timeout => 123] => {%script_output_defaults, timeout => 123 },
+        [123] => {%script_output_defaults, timeout => 123},
+        [fail_message => "FOO" ] => {%script_output_defaults},
+
     );
     while(@exp_args_list) {
         my $args = shift @exp_args_list;
