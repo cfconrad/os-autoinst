@@ -591,19 +591,17 @@ subtest 'validate_script_output' => sub {
         validate_script_output('script', ['Invalid parameter'])
     } qr/coderef or regexp/, 'Die on invalid parameter';
 
-    $mock_testapi->redefine(script_output => sub ($script, @args) { join(',', @args) });
+    my $arguments;
+    $mock_testapi->redefine(script_output => sub ($script, @args) { $arguments = { @args }; return '' });
     my @exp_args_list = (
-        [123, proceed_on_failure => 1, type_command => 1, title => 'title', fail_message => 'fail_message'],
-        [123, proceed_on_failure => 1, type_command => 1],
-        [proceed_on_failure => 1, type_command => 1, title => 'title', fail_message => 'fail_message'],
-        [proceed_on_failure => 1, type_command => 1],
-        [type_command => 1],
-        [timeout => 1],
-        [123]
+        [123, proceed_on_failure => 1, type_command => 1, fail_message => 'fail_message'] => {timeout => 123, proceed_on_failure => 1, type_command => 1, quiet => 1 },
+        [123] => {timeout => 123, quiet => 1, type_command => undef, proceed_on_failure => undef }
     );
-    for my $exp_args (@exp_args_list) {
-        my $joined_args = join(',', @$exp_args);
-        lives_ok { validate_script_output('script', qr/^$joined_args$/, @$exp_args) } "Arguments passed to script_output($joined_args)";
+    while(@exp_args_list) {
+        my $args = shift @exp_args_list;
+        my $exp = shift @exp_args_list;
+        validate_script_output('script', qr//, @$args);
+        is_deeply( $arguments , $exp,  "Arguments passed to script_output");
     }
 };
 
