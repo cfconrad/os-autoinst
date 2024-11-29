@@ -49,7 +49,6 @@ sub new ($class, $category = undef) {
     $self->{dents} = 0;
     $self->{post_fail_hook_running} = 0;
     $self->{timeoutcounter} = 0;
-    $self->{activated_consoles} = [];
     $self->{name} = $class;
     $self->{serial_failures} = [];
     $self->{autoinst_failures} = [];
@@ -617,27 +616,6 @@ Return a listref containing hashrefs like this:
 =cut
 
 sub ocr_checklist () { [] }
-
-# this is called if the test failed and the framework loaded a VM
-# snapshot - all consoles activated in the test's run function loose their
-# state
-sub rollback_activated_consoles ($self) {
-    for my $console (@{$self->{activated_consoles}}) {
-        # the backend will only reset its state, and call activate
-        # the next time - the console itself might actually not be
-        # able to activate a 2nd time, but that's up to the console class
-        autotest::query_isotovideo('backend_reset_console', {testapi_console => $console});
-    }
-    $self->{activated_consoles} = [];
-
-    if (defined($autotest::last_milestone_console)) {
-        my $ret = autotest::query_isotovideo('backend_select_console',
-            {testapi_console => $autotest::last_milestone_console});
-        die $ret->{error} if $ret->{error};
-    }
-
-    return;
-}
 
 sub search_for_expected_serial_failures ($self) {
     if (defined $bmwqemu::vars{BACKEND} && $bmwqemu::vars{BACKEND} eq 'qemu') {
